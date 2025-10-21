@@ -392,6 +392,7 @@ mkdir -p ${SAVED_PRETRAIN_CHECKPOINT_PATH}
 #find -L ${PRETRAIN_CHECKPOINT_PATH} -maxdepth 1 -type f -name "*.json" -print0 | xargs -0 cp -t ${SAVED_PRETRAIN_CHECKPOINT_PATH}
 #find -L ${PRETRAIN_CHECKPOINT_PATH} -maxdepth 1 -type f -name "merges.txt" -print0 | xargs -0 cp -t ${SAVED_PRETRAIN_CHECKPOINT_PATH}
 
+# --seed 42 add by xuelei
 megatron_options="  \
         --save ${SAVED_PRETRAIN_CHECKPOINT_PATH} \
         --lr ${LR} \
@@ -415,6 +416,7 @@ megatron_options="  \
         --ffn-hidden-size ${INTERMEDIATE_SIZE} \
         --seq-length ${SEQ_LEN} \
         --max-position-embeddings ${MAX_POSITION_EMBEDDINGS} \
+        --seed 42 \
         --max-padding-length ${PAD_LEN} \
         --log-interval 1 \
         --log-throughput \

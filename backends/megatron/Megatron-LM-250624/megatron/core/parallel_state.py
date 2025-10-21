@@ -469,23 +469,29 @@ def overwrite_nccl_comm_cfgs(nccl_comm_cfgs, pg_name, key_value_pair):
         nccl_comm_cfgs[pg_name] = {}
     nccl_comm_cfgs[pg_name][key_value_pair[0]] = key_value_pair[1]
 
+# add by xuel@20251017
 def init_nvshmem_by_torch_process_group(pg: torch.distributed.ProcessGroup):
     # Extract rank, nranks from process group
     num_ranks = pg.size()
     rank_id = pg.rank()
 
-    print("******************************************************")
+    try:
+        group_ranks = torch.distributed.get_process_group_ranks(pg)
+    except AttributeError:
+        raise RuntimeError(
+            "PyTorch version does not support get_process_group_ranks. "
+            "You need to manually track the ranks used to create the process group."
+        )
 
-    group_id  = rank_id // num_ranks
+    min_rank_id = min(group_ranks)
+    max_rank_id = max(group_ranks)
 
-    min_rank_id = group_id * num_ranks
-    max_rank_id = (group_id + 1) * num_ranks -1
-
-    print(f"rank_id: {rank_id}, group_id: {group_id}, num_ranks: {num_ranks}, min: {min_rank_id}, max: {max_rank_id}")
+    print(f"rank_id: {rank_id}, num_ranks: {num_ranks}, min: {min_rank_id}, max: {max_rank_id}")
 
     # Create an empty uniqueid for all ranks
-    broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != min_rank_id)]
-    
+    # broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != 0)]
+    # torch.distributed.broadcast_object_list(broadcast_objects, src=0, group=pg)
+    broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != 0)]
     torch.distributed.broadcast_object_list(broadcast_objects, src=min_rank_id, group=pg)
     torch.distributed.barrier(group=pg)
     from cuda.core.experimental import Device
@@ -1055,19 +1061,19 @@ def initialize_model_parallel(
             group_desc='TENSOR_MODEL_PARALLEL_GROUP',
         )
         # add by xuelei
-        # group_gloo = create_group(
-        #     ranks,
-        #     timeout=timeout,
-        #     pg_options=get_nccl_options('tp', nccl_comm_cfgs),
-        #     group_desc='TENSOR_MODEL_PARALLEL_GROUP_GLOO',
-        #     backend="gloo",
-        # )
+        group_gloo = create_group(
+            ranks,
+            timeout=timeout,
+            pg_options=get_nccl_options('tp', nccl_comm_cfgs),
+            group_desc='TENSOR_MODEL_PARALLEL_GROUP_GLOO',
+            backend="gloo",
+        )
 
         if rank in ranks:
             _TENSOR_MODEL_PARALLEL_GROUP = group
             _TENSOR_MODEL_PARALLEL_GLOBAL_RANKS = ranks
             # add by xuelei
-            # init_nvshmem_by_torch_process_group(group_gloo)
+            init_nvshmem_by_torch_process_group(group_gloo)
 
     # Build the pipeline model-parallel groups and embedding groups
     # (first and last rank in each pipeline model-parallel group).
