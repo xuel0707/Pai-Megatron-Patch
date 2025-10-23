@@ -487,17 +487,21 @@ def init_nvshmem_by_torch_process_group(pg: torch.distributed.ProcessGroup):
     max_rank_id = max(group_ranks)
     
     print("***********************************************************************************")
-    print(f"rank_id: {rank_id}, num_ranks: {num_ranks}, min: {min_rank_id}, max: {max_rank_id}")
+    print(f"rank_id: {rank_id}, num_ranks: {num_ranks}, group_ranks: {group_ranks}")
 
     # Create an empty uniqueid for all ranks
     # broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != 0)]
     # torch.distributed.broadcast_object_list(broadcast_objects, src=0, group=pg)
     broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != 0)]
+    
     torch.distributed.broadcast_object_list(broadcast_objects, src=min_rank_id, group=pg)
+    
     torch.distributed.barrier(group=pg)
     from cuda.core.experimental import Device
     nvshmem.core.init(device=Device(torch.cuda.current_device()), uid=broadcast_objects[0], rank=rank_id,
                       nranks=num_ranks, initializer_method="uid")
+
+    
 
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,

@@ -533,6 +533,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         # if is_expert is True:  
         #     print("forward is_expert:", is_expert)
         #     print("tp_group.size():",tp_group.size())
+        #     exit(0)
 
         # add by xuelei
         if sequence_parallel:
@@ -631,7 +632,14 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         #     # Here we rely on CUDA_DEVICE_MAX_CONNECTIONS=1 to ensure that the
         #     # reduce scatter is scheduled before the weight gradient computation
 
+        # if is_expert is True:  
+        #     print("backward is_expert:", is_expert)
+        #     print("tp_group.size():",tp_group.size())
+        #     exit(0)
+
         # add by xuelei
+        grad_input = grad_output.matmul(weight)
+
         if ctx.sequence_parallel and wgrad_compute:
             # pylint: disable=possibly-used-before-assignment
             handle.wait()
@@ -660,8 +668,6 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
                                     tp_size,
                                     False,
                                     True)
-
-           
 
             assert not ctx.allreduce_dgrad
             dim_size = list(input.size())
