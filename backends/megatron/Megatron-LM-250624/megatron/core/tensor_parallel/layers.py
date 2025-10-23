@@ -529,47 +529,37 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         #     output = output + bias
         # return output
 
-        if is_expert is True:  # add by xuelei
-            if sequence_parallel:
-                dim_size = list(input.size())
-                dim_size[0] = dim_size[0] * tp_group.size()
+        
+        # if is_expert is True:  
+        #     print("forward is_expert:", is_expert)
+        #     print("tp_group.size():",tp_group.size())
 
-                all_gather_buffer = get_global_memory_buffer().get_tensor(dim_size, input.dtype, "mpu")
-                dist_all_gather_func(all_gather_buffer, input, group=tp_group)
-                total_input = all_gather_buffer
-            else:
-                total_input = input
+        # add by xuelei
+        if sequence_parallel:
+            RANK = int(os.environ.get("RANK", 0))
+            WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 
-            output = torch.matmul(total_input, weight.t())
-            if bias is not None:
-                output = output + bias
-            return output
+            total_input = input.contiguous().view(-1, input.size(-1))
+
+            M_local = total_input.size(0)
+            M = M_local * tp_group.size()
+
+            global is_ag_gemm_ctx 
+            global ag_gemm_ctx
+
+            if is_ag_gemm_ctx == 0:
+                ag_gemm_ctx = create_ag_gemm_context(total_input, weight, RANK, WORLD_SIZE, max_M=M)
+                is_ag_gemm_ctx=1
+
+            output = ag_gemm(total_input, weight, ctx=ag_gemm_ctx, persistent=False, autotune=False)
+            output = output.unsqueeze(1)
         else:
-            if sequence_parallel:
-                RANK = int(os.environ.get("RANK", 0))
-                WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
+            total_input = input
+            output = torch.matmul(total_input, weight.t())
 
-                total_input = input.contiguous().view(-1, input.size(-1))
-
-                M_local = total_input.size(0) 
-                M = M_local * tp_group.size()
-
-                global is_ag_gemm_ctx 
-                global ag_gemm_ctx
-
-                if is_ag_gemm_ctx == 0:
-                    ag_gemm_ctx = create_ag_gemm_context(total_input, weight, RANK, WORLD_SIZE, max_M=M)
-                    is_ag_gemm_ctx=1
-
-                output = ag_gemm(total_input, weight, ctx=ag_gemm_ctx, persistent=False, autotune=False)
-                output = output.unsqueeze(1)
-            else:
-                total_input = input
-                output = torch.matmul(total_input, weight.t())
-
-            if bias is not None:
-                output = output + bias
-            return output
+        if bias is not None:
+            output = output + bias
+        return output
 
     @staticmethod
     @custom_bwd
@@ -641,73 +631,46 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         #     # Here we rely on CUDA_DEVICE_MAX_CONNECTIONS=1 to ensure that the
         #     # reduce scatter is scheduled before the weight gradient computation
 
-        if is_expert is True:  # add by xuelei
-            grad_input = grad_output.matmul(weight)
+        # add by xuelei
+        if ctx.sequence_parallel and wgrad_compute:
+            # pylint: disable=possibly-used-before-assignment
+            handle.wait()
 
-            if ctx.sequence_parallel and wgrad_compute:
-                # pylint: disable=possibly-used-before-assignment
-                handle.wait()
+        if wgrad_compute:
+            grad_output, total_input = prepare_input_tensors_for_wgrad_compute(
+                grad_output, total_input
+            )
 
-            if wgrad_compute:
-                grad_output, total_input = prepare_input_tensors_for_wgrad_compute(
-                    grad_output, total_input
-                )
+        if ctx.sequence_parallel:
+            global gemm_rs_op
+            if gemm_rs_op is None:
+                tp_size  = torch.distributed.get_world_size(tp_group)
+                
+                # e.g.grad_output shape: torch.Size([4096, 16160])
+                # e.g.weight shape: torch.Size([16160, 2048])
+                M = grad_output.size(0)
+                N = weight.size(1) 
+                K = weight.size(0)
+                gemm_rs_op = GemmRS(tp_group,
+                                    M,
+                                    N,
+                                    K * tp_size,
+                                    grad_output.dtype,
+                                    grad_output.dtype,
+                                    tp_size,
+                                    False,
+                                    True)
 
-            if ctx.allreduce_dgrad:
-                # Asynchronous all-reduce
-                handle = torch.distributed.all_reduce(grad_input, group=tp_group, async_op=True)
-                # Here we rely on CUDA_DEVICE_MAX_CONNECTIONS=1 to ensure that the
-                # all-reduce is scheduled before the weight gradient computation
+           
 
-            if ctx.sequence_parallel:
-                assert not ctx.allreduce_dgrad
-                dim_size = list(input.size())
-                sub_grad_input = torch.empty(
-                    dim_size, dtype=input.dtype, device=torch.cuda.current_device(), requires_grad=False
-                )
-                # reduce_scatter
-                handle = dist_reduce_scatter_func(
-                    sub_grad_input, grad_input, group=tp_group, async_op=True
-                )
-                # Here we rely on CUDA_DEVICE_MAX_CONNECTIONS=1 to ensure that the
-                # reduce scatter is scheduled before the weight gradient computation
-        else:
-            if ctx.sequence_parallel and wgrad_compute:
-                # pylint: disable=possibly-used-before-assignment
-                handle.wait()
+            assert not ctx.allreduce_dgrad
+            dim_size = list(input.size())
+            sub_grad_input = torch.empty(
+                dim_size, dtype=input.dtype, device=torch.cuda.current_device(), requires_grad=False
+            )
 
-            if wgrad_compute:
-                grad_output, total_input = prepare_input_tensors_for_wgrad_compute(
-                    grad_output, total_input
-                )
-
-            if ctx.sequence_parallel:
-                global gemm_rs_op
-                if gemm_rs_op is None:
-                    tp_size  = torch.distributed.get_world_size(tp_group)
-                    
-                    # e.g.grad_output shape: torch.Size([4096, 16160])
-                    # e.g.weight shape: torch.Size([16160, 2048])
-                    M = grad_output.size(0)
-                    N = weight.size(1) 
-                    K = weight.size(0)
-                    gemm_rs_op = GemmRS(tp_group,
-                                        M,
-                                        N,
-                                        K * tp_size,
-                                        grad_output.dtype,
-                                        grad_output.dtype,
-                                        tp_size,
-                                        False,
-                                        True)
-
-                grad_input = gemm_rs_op.forward(grad_output, weight.T, None)
-
-                assert not ctx.allreduce_dgrad
-                dim_size = list(input.size())
-                sub_grad_input = torch.empty(
-                    dim_size, dtype=input.dtype, device=torch.cuda.current_device(), requires_grad=False
-                )
+            sub_grad_input = gemm_rs_op.forward(grad_output, weight.T, None)
+            sub_grad_input = sub_grad_input.unsqueeze(1)
 
         #############################################################
 
@@ -865,7 +828,7 @@ def linear_with_grad_accumulation_and_async_allreduce(
         grad_output_buffer,
         wgrad_deferral_limit,
         tp_group,
-        is_expert,
+        is_expert,#add by xuel@20251017
     ]
 
     if not linear_with_grad_accumulation_and_async_allreduce.warned:

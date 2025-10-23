@@ -485,7 +485,8 @@ def init_nvshmem_by_torch_process_group(pg: torch.distributed.ProcessGroup):
 
     min_rank_id = min(group_ranks)
     max_rank_id = max(group_ranks)
-
+    
+    print("***********************************************************************************")
     print(f"rank_id: {rank_id}, num_ranks: {num_ranks}, min: {min_rank_id}, max: {max_rank_id}")
 
     # Create an empty uniqueid for all ranks
