@@ -132,6 +132,8 @@ stimer = StragglerDetector()
 
 from megatron.core.msc_utils import MultiStorageClientFeature, open_file
 
+# add by xuel@20251112
+from torch.profiler import profile, record_function, ProfilerActivity
 
 def destroy_global_state():
     destroy_global_vars()
@@ -2291,6 +2293,69 @@ def train(
             )
         if should_exit:
             break
+
+        # # add by xuel@20251112
+        # rank = torch.distributed.get_rank()
+        # PROF_ITER_START = 5   
+        # PROF_ITER_END = 6   
+        # if PROF_ITER_START <= iteration < PROF_ITER_END:
+        #     with profile(
+        #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        #         schedule=torch.profiler.schedule(wait=0, warmup=0, active=PROF_ITER_END - PROF_ITER_START),
+        #         on_trace_ready=torch.profiler.tensorboard_trace_handler(f'/workspace/trace_rank_{rank}'),
+        #         record_shapes=True,
+        #         profile_memory=True,
+        #         with_stack=True
+        #     ) as prof:
+        #         for _ in range(PROF_ITER_END - PROF_ITER_START):
+        #             ft_integration.on_training_step_start()
+        #             (
+        #                 loss_dict,
+        #                 skipped_iter,
+        #                 should_checkpoint,
+        #                 should_exit,
+        #                 exit_code,
+        #                 grad_norm,
+        #                 num_zeros_in_grad,
+        #             ) = train_step(
+        #                 forward_step_func, train_data_iterator, model, optimizer, opt_param_scheduler, config
+        #             )
+        #             ft_integration.on_training_step_end()
+        #             prof.step()
+
+        #             if should_exit:
+        #                 break
+        #         if not should_exit:
+        #             continue
+        #         else:
+        #             break
+        # else:
+        #     args.curr_iteration = iteration
+        #     ft_integration.on_training_step_start()
+        #     (
+        #         loss_dict,
+        #         skipped_iter,
+        #         should_checkpoint,
+        #         should_exit,
+        #         exit_code,
+        #         grad_norm,
+        #         num_zeros_in_grad,
+        #     ) = train_step(
+        #         forward_step_func, train_data_iterator, model, optimizer, opt_param_scheduler, config
+        #     )
+        #     ft_integration.on_training_step_end()
+        #     if should_checkpoint:
+        #         save_checkpoint_and_time(
+        #             iteration,
+        #             model,
+        #             optimizer,
+        #             opt_param_scheduler,
+        #             num_floating_point_operations_so_far,
+        #             checkpointing_context,
+        #             train_data_iterator=train_data_iterator,
+        #         )
+        #     if should_exit:
+        #         break
 
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
