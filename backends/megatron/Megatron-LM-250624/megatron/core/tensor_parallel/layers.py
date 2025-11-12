@@ -533,13 +533,12 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         # if is_expert is True:  
         #     print("forward is_expert:", is_expert)
         #     print("tp_group.size():",tp_group.size())
-        #     exit(0)
+        # else:
+        #     print("forward is_expert:", is_expert)
+        #     print("tp_group.size():",tp_group.size())
 
         # add by xuelei
         if sequence_parallel:
-            RANK = int(os.environ.get("RANK", 0))
-            WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
-
             total_input = input.contiguous().view(-1, input.size(-1))
 
             M_local = total_input.size(0)
@@ -549,7 +548,9 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
             global ag_gemm_ctx
 
             if is_ag_gemm_ctx == 0:
-                ag_gemm_ctx = create_ag_gemm_context(total_input, weight, RANK, WORLD_SIZE, max_M=M)
+                ag_gemm_ctx = create_ag_gemm_context(total_input, weight, 
+                                                     tp_group.rank(), tp_group.size(), 
+                                                     num_local_ranks=tp_group.size(), max_M=M)
                 is_ag_gemm_ctx=1
 
             output = ag_gemm(total_input, weight, ctx=ag_gemm_ctx, persistent=False, autotune=False)

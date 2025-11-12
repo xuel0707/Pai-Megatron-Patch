@@ -484,25 +484,30 @@ def init_nvshmem_by_torch_process_group(pg: torch.distributed.ProcessGroup):
         )
 
     min_rank_id = min(group_ranks)
-    max_rank_id = max(group_ranks)
+    group_id = min_rank_id // num_ranks
     
     print("***********************************************************************************")
-    print(f"rank_id: {rank_id}, num_ranks: {num_ranks}, group_ranks: {group_ranks}")
+    print(f"rank_id: {rank_id}, num_ranks: {num_ranks}, group_ranks: {group_ranks}, "
+          f"min_rank_id: {min_rank_id}, group_id: {group_id}")
 
     # Create an empty uniqueid for all ranks
     # broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != 0)]
     # torch.distributed.broadcast_object_list(broadcast_objects, src=0, group=pg)
+
+    # torch.distributed.barrier(group=pg)
+    # from cuda.core.experimental import Device
+    # nvshmem.core.init(device=Device(torch.cuda.current_device()), uid=broadcast_objects[0], rank=rank_id,
+    #                   nranks=num_ranks, initializer_method="uid")
+
     broadcast_objects = [nvshmem.core.get_unique_id(empty=rank_id != 0)]
-    
     torch.distributed.broadcast_object_list(broadcast_objects, src=min_rank_id, group=pg)
-    
+
     torch.distributed.barrier(group=pg)
     from cuda.core.experimental import Device
     nvshmem.core.init(device=Device(torch.cuda.current_device()), uid=broadcast_objects[0], rank=rank_id,
                       nranks=num_ranks, initializer_method="uid")
 
     
-
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
@@ -1078,6 +1083,9 @@ def initialize_model_parallel(
             _TENSOR_MODEL_PARALLEL_GROUP = group
             _TENSOR_MODEL_PARALLEL_GLOBAL_RANKS = ranks
             # add by xuelei
+            LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
+            torch.cuda.set_device(LOCAL_RANK)
+            torch.cuda.synchronize()
             init_nvshmem_by_torch_process_group(group_gloo)
 
     # Build the pipeline model-parallel groups and embedding groups

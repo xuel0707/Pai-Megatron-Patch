@@ -131,12 +131,18 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel]:
             rope_scaling=args.use_rope_scaling,
             mtp_block_spec=mtp_block_spec,
         )
+    
+    
 
     return model
 
 if __name__ == "__main__":
     from megatron_patch.template.helper import forward_step
     train_valid_test_datasets_provider.is_distributed = True
+
+    # add by xuel@20251110
+    from triton_dist.tools import apply_triton340_inductor_patch
+    apply_triton340_inductor_patch()
 
     pretrain(
         train_valid_test_datasets_provider,
